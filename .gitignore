@@ -1,0 +1,30 @@
+# OS specific styles 
+.DS_STORE
+
+
+
+# builds
+/build/
+/build-*/
+Makefile
+
+
+# Visual Studio
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.user
+*.log
+*.tlog
+*.lastbuildstate
+ipch/
+.vs/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+.cache/
+*.cache
+
+
