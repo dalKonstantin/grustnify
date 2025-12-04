@@ -5,4 +5,7 @@ struct AudioBuffer {
   int channels;
   std::vector<float> samples;
 };
+
+core::AudioBuffer Slow(core::AudioBuffer &buffer);
+core::AudioBuffer Reverb(core::AudioBuffer &buffer);
 } // namespace core
