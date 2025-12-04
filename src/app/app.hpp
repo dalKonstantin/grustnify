@@ -1,5 +1,6 @@
 #include <QApplication>
 
+namespace app {
 class App : public QApplication {
   Q_OBJECT
 public:
@@ -12,3 +13,4 @@ public:
 private:
   QString file_path_;
 };
+} // namespace app

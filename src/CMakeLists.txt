@@ -10,4 +10,8 @@ target_include_directories(${PROJECT_NAME}
 )
 
 
-target_link_libraries(${PROJECT_NAME} PRIVATE spdlog::spdlog Qt6::Widgets)
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  spdlog::spdlog
+  Qt6::Widgets
+  PkgConfig::FFMPEG
+)

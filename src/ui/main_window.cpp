@@ -13,12 +13,13 @@
 
 #include "log/log.hpp"
 
+namespace ui {
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   setFixedSize(400, 400);
 
   auto *central = new QWidget(this);
   setCentralWidget(central);
-  central->setStyleSheet("background: white;");
+  // central->setStyleSheet("background: white;");
 
   auto *layout = new QVBoxLayout(central);
   layout->setAlignment(Qt::AlignCenter);
@@ -65,7 +66,7 @@ void MainWindow::on_button_load_clicked() {
     return;
   field_path_->setText(file_path);
 
-  auto *app = static_cast<App *>(qApp);
+  auto *app = static_cast<app::App *>(qApp);
   app->load_audio_file(file_path);
 }
 
@@ -73,6 +74,8 @@ void MainWindow::on_button_grustnify_clicked() {
   TE_TRACE("grustnify button clicked");
   QMessageBox::information(this, "grustnify", "TODO: grustnify");
 
-  auto *app = static_cast<App *>(qApp);
+  auto *app = static_cast<app::App *>(qApp);
   app->process_audio_file();
 }
+
+} // namespace ui

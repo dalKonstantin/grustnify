@@ -5,8 +5,8 @@
 
 int main(int argc, char *argv[]) {
   grustnify::Log::Init();
-  App a(argc, argv);
-  MainWindow w;
+  app::App a(argc, argv);
+  ui::MainWindow w;
   w.show();
   return a.exec();
 }

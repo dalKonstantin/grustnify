@@ -2,7 +2,7 @@
 #include <QApplication>
 
 #include "log/log.hpp"
-
+namespace app {
 App::App(int &argc, char **argv) : QApplication(argc, argv) {};
 App::~App() = default;
 
@@ -11,3 +11,4 @@ void App::load_audio_file(const QString &path) {
   file_path_ = path;
 }
 void App::process_audio_file() { TE_INFO("processing file"); }
+} // namespace app

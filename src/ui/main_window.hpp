@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QPushButton>
 
+namespace ui {
 class MainWindow : public QMainWindow {
   Q_OBJECT
 
@@ -20,3 +21,4 @@ private:
   QPushButton *button_grustnify_;
   QLineEdit *field_path_;
 };
+} // namespace ui
