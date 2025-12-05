@@ -1,5 +1,6 @@
 #include "core/audio_buffer.hpp"
 #include "core/audio_decoder.hpp"
+#include "log/log.hpp"
 #include <QString>
 #include <gtest/gtest.h>
 #include <qcontainerfwd.h>
@@ -9,6 +10,7 @@ static QString testDataFile(const char *name) {
 }
 
 TEST(AudioDecoderTest, OpenValidFile) {
+  grustnify::Log::Init();
   QString path = testDataFile("sine_440hz_44-1kHz_2sec.wav");
   core::AudioDecoder decoder(path);
 

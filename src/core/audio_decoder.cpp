@@ -18,19 +18,22 @@ extern "C" {
 
 namespace core {
 AudioDecoder::AudioDecoder(QString &input_path) : path_(input_path) {}
-AudioDecoder::~AudioDecoder() {};
+AudioDecoder::~AudioDecoder() { close(); };
 bool AudioDecoder::open() {
+  close();
 
   // Step 1: Open the input file and create format context
   if (avformat_open_input(&format_ctx_, path_.toUtf8().constData(), nullptr,
                           nullptr) != 0) {
     TE_ERROR("Could not open input file.");
+    format_ctx_ = nullptr;
     return false;
   };
   // Step 2: Retrieve Stream information;
   if (avformat_find_stream_info(format_ctx_, nullptr) < 0) {
 
     TE_ERROR("Could not find stream information.");
+    close();
     return false;
   }
   // Step 3: Find the audio stream
@@ -38,6 +41,7 @@ bool AudioDecoder::open() {
       av_find_best_stream(format_ctx_, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
   if (audio_stream_index_ < 0) {
     TE_TRACE("Could not find audio stream");
+    close();
     return false;
   }
 
@@ -46,6 +50,7 @@ bool AudioDecoder::open() {
   const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
   if (!codec) {
     TE_ERROR("Could not find decoder.");
+    close();
     return false;
   }
 
@@ -53,11 +58,13 @@ bool AudioDecoder::open() {
   if (!codec_ctx_ ||
       avcodec_parameters_to_context(codec_ctx_, stream->codecpar) < 0) {
     TE_ERROR("Could not copy codec params");
+    close();
     return false;
   }
 
   if (avcodec_open2(codec_ctx_, codec, nullptr) < 0) {
     TE_ERROR("Could not open codec.");
+    close();
     return false;
   }
 
@@ -74,6 +81,7 @@ bool AudioDecoder::open() {
   // Init resampler
   if (!init_resampler()) {
     TE_ERROR("Could not init resampler");
+    close();
     return false;
   }
 
@@ -81,6 +89,7 @@ bool AudioDecoder::open() {
   frame_ = av_frame_alloc();
   if (!packet_ || !frame_) {
     TE_ERROR("Could not allocate packet/frame");
+    close();
     return false;
   }
 
@@ -90,8 +99,9 @@ bool AudioDecoder::open() {
 };
 
 bool AudioDecoder::decode_to_buffer(core::AudioBuffer &buffer) {
-  if (!format_ctx_ || !swr_ctx_ || !codec_ctx_) {
+  if (!format_ctx_ || !swr_ctx_ || !codec_ctx_ || !packet_ || !frame_) {
     TE_ERROR("Decoder is not itialized");
+    close();
     return false;
   }
 
@@ -116,13 +126,18 @@ bool AudioDecoder::decode_to_buffer(core::AudioBuffer &buffer) {
 
     int ret = avcodec_receive_frame(codec_ctx_, frame_);
     if (ret == AVERROR(EAGAIN)) {
+      if (end_of_file_) {
+        break;
+      }
       continue;
     }
     if (ret == AVERROR_EOF) {
-      return false;
+      break;
+      // return true;
     }
     if (ret < 0) {
       TE_TRACE("Failed to recieve frame");
+      close();
       return false;
     }
 
@@ -142,6 +157,7 @@ bool AudioDecoder::decode_to_buffer(core::AudioBuffer &buffer) {
     if (converted < 0) {
 
       TE_ERROR("Failed to resample");
+      close();
       return false;
     }
 
@@ -155,6 +171,7 @@ bool AudioDecoder::decode_to_buffer(core::AudioBuffer &buffer) {
 bool AudioDecoder::init_resampler() {
   if (!codec_ctx_) {
     TE_ERROR("Could not init resampler");
+    close();
     return false;
   }
   if (swr_ctx_) {
@@ -166,12 +183,47 @@ bool AudioDecoder::init_resampler() {
                           &input_channel_layout_, codec_ctx_->sample_fmt,
                           codec_ctx_->sample_rate, 0, nullptr) < 0) {
     TE_ERROR("Could not alloc swr");
+    close();
     return false;
   }
   if (swr_init(swr_ctx_) < 0) {
     TE_ERROR("Could not init swr");
+    close();
     return false;
   }
   return true;
 };
+
+void AudioDecoder::close() {
+  if (frame_) {
+    av_frame_free(&frame_);
+    frame_ = nullptr;
+  }
+  if (packet_) {
+    av_packet_free(&packet_);
+    packet_ = nullptr;
+  }
+  if (swr_ctx_) {
+    swr_free(&swr_ctx_);
+    swr_ctx_ = nullptr;
+  }
+  if (codec_ctx_) {
+    avcodec_free_context(&codec_ctx_);
+    codec_ctx_ = nullptr;
+  }
+  if (format_ctx_) {
+    avformat_close_input(&format_ctx_);
+    format_ctx_ = nullptr;
+  }
+
+  av_channel_layout_uninit(&input_channel_layout_);
+  av_channel_layout_uninit(&output_channel_layout_);
+
+  audio_stream_index_ = -1;
+  input_sample_rate_ = 0;
+  output_sample_rate_ = 0;
+  output_channels_ = 0;
+  end_of_file_ = false;
+}
 } // namespace core
+  //

@@ -24,6 +24,7 @@ public:
 
 private:
   bool init_resampler();
+  void close();
 
 private:
   QString path_ = "";
@@ -31,8 +32,8 @@ private:
   AVCodecContext *codec_ctx_ = nullptr;
   SwrContext *swr_ctx_ = nullptr;
   int audio_stream_index_ = -1;
-  AVChannelLayout input_channel_layout_;
-  AVChannelLayout output_channel_layout_;
+  AVChannelLayout input_channel_layout_{};
+  AVChannelLayout output_channel_layout_{};
   AVFrame *frame_ = nullptr;
 
   int input_sample_rate_ = 0;
@@ -40,6 +41,6 @@ private:
   int output_channels_ = 0;
   bool end_of_file_ = false;
   AVSampleFormat output_sample_fmt_ = AV_SAMPLE_FMT_FLT;
-  AVPacket *packet_;
+  AVPacket *packet_ = nullptr;
 };
 } // namespace core
