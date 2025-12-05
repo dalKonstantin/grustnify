@@ -19,3 +19,4 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 
 include(cmake/FetchDependencies.cmake)
 add_subdirectory(src)
+add_subdirectory(tests)

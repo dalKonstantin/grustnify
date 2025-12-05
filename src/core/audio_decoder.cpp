@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-extern "C"{
+extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavcodec/codec.h>
 #include <libavcodec/packet.h>
@@ -26,7 +26,7 @@ bool AudioDecoder::open() {
                           nullptr) != 0) {
     TE_ERROR("Could not open input file.");
     return false;
-  }
+  };
   // Step 2: Retrieve Stream information;
   if (avformat_find_stream_info(format_ctx_, nullptr) < 0) {
 
@@ -77,101 +77,101 @@ bool AudioDecoder::open() {
     return false;
   }
 
+  packet_ = av_packet_alloc();
+  frame_ = av_frame_alloc();
+  if (!packet_ || !frame_) {
+    TE_ERROR("Could not allocate packet/frame");
+    return false;
+  }
+
+  end_of_file_ = false;
+
   return true;
 };
 
 bool AudioDecoder::decode_to_buffer(core::AudioBuffer &buffer) {
-    if(!format_ctx_ || !swr_ctx_ || !codec_ctx_) {
-        TE_ERROR("Decoder is not itialized");
-        return false;
+  if (!format_ctx_ || !swr_ctx_ || !codec_ctx_) {
+    TE_ERROR("Decoder is not itialized");
+    return false;
+  }
+
+  buffer.sample_rate = output_sample_rate_;
+  buffer.channels = output_channels_;
+
+  std::vector<float> tmp;
+
+  while (true) {
+    if (!end_of_file_) {
+      if (av_read_frame(format_ctx_, packet_) < 0) {
+        end_of_file_ = true;
+        avcodec_send_packet(codec_ctx_, nullptr);
+      } else if (packet_->stream_index == audio_stream_index_) {
+        avcodec_send_packet(codec_ctx_, packet_);
+        av_packet_unref(packet_);
+      } else {
+        av_packet_unref(packet_);
+        continue;
+      }
     }
 
-    buffer.sample_rate = output_sample_rate_;
-    buffer.channels = output_channels_;
-
-
-    std::vector<float> tmp;
-
-    while (true) {
-        if(!end_of_file_) {
-            if(av_read_frame(format_ctx_, packet_) < 0) {
-                end_of_file_ = true;
-                avcodec_send_packet(codec_ctx_, nullptr);
-            } else if (packet_->stream_index == audio_stream_index_) {
-                avcodec_send_packet(codec_ctx_, packet_);
-                av_packet_unref(packet_);
-            } else {
-                av_packet_unref(packet_);
-                continue;
-            }
-        }
-
-        int ret = avcodec_receive_frame(codec_ctx_, frame_);
-        if(ret == AVERROR(EAGAIN)) {
-            continue;
-        }
-        if(ret == AVERROR_EOF) {
-            return false;
-        }
-        if(ret < 0) {
-            TE_TRACE("Failed to recieve frame");
-            return false;
-        }
-
-        // Resample to output buffer
-        int max_out_samples = frame_->nb_samples;
-
-        tmp.resize(max_out_samples * output_channels_);
-
-        uint8_t *out_data[1] = {reinterpret_cast<uint8_t*>(tmp.data())};
-
-        int converted  = swr_convert(
-            swr_ctx_,
-            out_data,
-            max_out_samples,
-            (const uint8_t**)frame_->data,
-            frame_->nb_samples
-        );
-
-        av_frame_unref(frame_);
-
-        if(converted < 0) {
-
-            TE_ERROR("Failed to resample");
-            return false;
-        }
-
-        int total_samples = converted * output_channels_;
-
-        buffer.samples.insert(buffer.samples.end(), tmp.begin(), tmp.begin() + total_samples);
+    int ret = avcodec_receive_frame(codec_ctx_, frame_);
+    if (ret == AVERROR(EAGAIN)) {
+      continue;
     }
-    return true;
+    if (ret == AVERROR_EOF) {
+      return false;
+    }
+    if (ret < 0) {
+      TE_TRACE("Failed to recieve frame");
+      return false;
+    }
+
+    // Resample to output buffer
+    int max_out_samples = frame_->nb_samples;
+
+    tmp.resize(max_out_samples * output_channels_);
+
+    uint8_t *out_data[1] = {reinterpret_cast<uint8_t *>(tmp.data())};
+
+    int converted =
+        swr_convert(swr_ctx_, out_data, max_out_samples,
+                    (const uint8_t **)frame_->data, frame_->nb_samples);
+
+    av_frame_unref(frame_);
+
+    if (converted < 0) {
+
+      TE_ERROR("Failed to resample");
+      return false;
+    }
+
+    int total_samples = converted * output_channels_;
+
+    buffer.samples.insert(buffer.samples.end(), tmp.begin(),
+                          tmp.begin() + total_samples);
+  }
+  return true;
 };
 bool AudioDecoder::init_resampler() {
-    if(!codec_ctx_) {
-        TE_ERROR("Could not init resampler");
-        return false;
-    }
-    if(swr_ctx_){
-        swr_free(&swr_ctx_);
-    }
+  if (!codec_ctx_) {
+    TE_ERROR("Could not init resampler");
+    return false;
+  }
+  if (swr_ctx_) {
+    swr_free(&swr_ctx_);
+  }
 
-    if (swr_alloc_set_opts2(
-                    &swr_ctx_,
-                    &output_channel_layout_,
-                    output_sample_fmt_,
-                    output_sample_rate_,
-                    &input_channel_layout_,
-                    codec_ctx_->sample_fmt,
-                    codec_ctx_->sample_rate,
-                    0, nullptr) < 0) {
-            TE_ERROR("Could not alloc swr");
-            return false;
-        }
-    if(swr_init(swr_ctx_) < 0) {
-       TE_ERROR("Could not init swr");
-       return false;
-    }
-    return true;
+  if (swr_alloc_set_opts2(&swr_ctx_, &output_channel_layout_,
+                          output_sample_fmt_, output_sample_rate_,
+                          &input_channel_layout_, codec_ctx_->sample_fmt,
+                          codec_ctx_->sample_rate, 0, nullptr) < 0) {
+    TE_ERROR("Could not alloc swr");
+    return false;
+  }
+  if (swr_init(swr_ctx_) < 0) {
+    TE_ERROR("Could not init swr");
+    return false;
+  }
+  return true;
 };
 } // namespace core

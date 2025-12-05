@@ -1,17 +1,27 @@
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp *.hpp)
-
-
-add_executable(${PROJECT_NAME} ${SOURCES})
-
-
-target_include_directories(${PROJECT_NAME}
-      PUBLIC
-          ${CMAKE_CURRENT_SOURCE_DIR}
+add_library(grustnify_core STATIC
+    core/audio_decoder.cpp
+    log/log.cpp
+    ui/main_window.cpp
+    app/app.cpp
 )
 
+target_include_directories(grustnify_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC
-  spdlog::spdlog
-  Qt6::Widgets
-  PkgConfig::FFMPEG
+target_link_libraries(grustnify_core
+    PUBLIC
+        spdlog::spdlog
+        Qt6::Widgets
+        PkgConfig::FFMPEG
+)
+
+add_executable(grustnify
+    app/main.cpp
+)
+
+target_link_libraries(grustnify
+    PRIVATE
+        grustnify_core
 )

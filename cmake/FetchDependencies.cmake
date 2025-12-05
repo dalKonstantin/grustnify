@@ -7,8 +7,14 @@ FetchContent_Declare(
   GIT_TAG v1.16.0
 )
 
+FetchContent_Declare(
+    gtest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+)
+
 
 
 FetchContent_MakeAvailable(
   spdlog
+  gtest
 )
