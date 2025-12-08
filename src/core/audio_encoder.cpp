@@ -19,7 +19,6 @@ AudioEncoder::~AudioEncoder() { close(); }
 
 void AudioEncoder::close() {
   if (!opened_) {
-    // даже если не открыт, всё равно подчистим
   }
 
   if (frame_) {
@@ -52,7 +51,6 @@ void AudioEncoder::close() {
 }
 
 bool AudioEncoder::init_stream_and_codec() {
-  // Контекст формата (контейнера) уже создан в open()
   AVCodecID codec_id = AV_CODEC_ID_PCM_F32LE; // WAV с float32
 
   const AVCodec *codec = avcodec_find_encoder(codec_id);
