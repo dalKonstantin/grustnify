@@ -15,11 +15,8 @@ void grustnify::Log::Init() {
   std::vector<spdlog::sink_ptr> logSinks;
   logSinks.emplace_back(
       std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-  logSinks.emplace_back(
-      std::make_shared<spdlog::sinks::basic_file_sink_mt>("tEngine.log", true));
 
   logSinks[0]->set_pattern("%^[%T] %n: %v%$");
-  logSinks[1]->set_pattern("[%T] [%l] %n: %v");
 
   s_core_logger = std::make_shared<spdlog::logger>("tEngine", begin(logSinks),
                                                    end(logSinks));
