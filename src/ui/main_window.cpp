@@ -72,7 +72,6 @@ void MainWindow::on_button_load_clicked() {
 
 void MainWindow::on_button_grustnify_clicked() {
   TE_TRACE("grustnify button clicked");
-  QMessageBox::information(this, "grustnify", "TODO: grustnify");
 
   auto *app = static_cast<app::App *>(qApp);
   app->process_audio_file();
