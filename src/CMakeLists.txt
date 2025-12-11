@@ -27,3 +27,6 @@ target_link_libraries(grustnify
     PRIVATE
         grustnify_core
 )
+install(TARGETS grustnify
+    RUNTIME DESTINATION bin
+)
