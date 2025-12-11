@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 
+option(ENABLE_TESTS "Build tests" OFF)
 
 # Compile commads for lsp
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -19,4 +20,6 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 
 include(cmake/FetchDependencies.cmake)
 add_subdirectory(src)
-add_subdirectory(tests)
+if(ENABLE_TESTS)
+  add_subdirectory(tests)
+endif()

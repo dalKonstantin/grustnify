@@ -4,6 +4,8 @@
 #include <QApplication>
 
 int main(int argc, char *argv[]) {
+  QApplication::setApplicationName("grustnify");
+  QApplication::setApplicationDisplayName("grustnify");
   grustnify::Log::Init();
   app::App a(argc, argv);
   ui::MainWindow w;

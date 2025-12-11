@@ -19,11 +19,34 @@ target_link_libraries(grustnify_core
         PkgConfig::FFMPEG
 )
 
-add_executable(grustnify
-    app/main.cpp
-)
+# --- executable (macOS bundle + icon / other platforms plain) ---
+
+if(APPLE)
+  set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icons/AppIcon.icns")
+  set(MACOSX_BUNDLE_ICON_FILE "AppIcon.icns")
+
+  add_executable(grustnify
+        MACOSX_BUNDLE
+        app/main.cpp
+        ${APP_ICON_MACOS}
+    )
+
+  set_source_files_properties(${APP_ICON_MACOS}
+        PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources"
+    )
+else()
+  add_executable(grustnify
+        app/main.cpp
+    )
+endif()
 
 target_link_libraries(grustnify
     PRIVATE
         grustnify_core
+)
+
+install(TARGETS grustnify
+    RUNTIME DESTINATION bin
+    BUNDLE DESTINATION .
 )
