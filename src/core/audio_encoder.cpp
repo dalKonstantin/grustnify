@@ -7,6 +7,7 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/frame.h>
+#include <libswresample/swresample.h>
 }
 
 namespace core {
@@ -51,11 +52,15 @@ void AudioEncoder::close() {
 }
 
 bool AudioEncoder::init_stream_and_codec() {
-  AVCodecID codec_id = AV_CODEC_ID_PCM_F32LE; // WAV с float32
-
+  AVCodecID codec_id = AV_CODEC_ID_MP3; // WAV с float32
+  
+  swr_ctx_ = swr_alloc_set_opts2(
+      ch_layout_, AV_SAMPLE_FMT_S16P, sample_rate_,
+      ch_layout_, AV_SAMPLE_FMT_FLT, sample_rate_,
+      0, nullptr);
   const AVCodec *codec = avcodec_find_encoder(codec_id);
   if (!codec) {
-    TE_ERROR("AudioEncoder: Could not find encoder for PCM_F32LE");
+    TE_ERROR("AudioEncoder: Could not find encoder for mp3");
     return false;
   }
 

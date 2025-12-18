@@ -32,6 +32,7 @@ private:
 
   AVFormatContext *format_ctx_ = nullptr;
   AVCodecContext *codec_ctx_ = nullptr;
+  SwrContext* swr_ctx_ = nullptr;
   AVStream *stream_ = nullptr;
   AVFrame *frame_ = nullptr;
   AVPacket *packet_ = nullptr;
