@@ -1,166 +1,80 @@
-#include "core/audio_encoder.hpp"
+#include "audio_encoder.hpp"
 #include "log/log.hpp"
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/avutil.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/frame.h>
-#include <libswresample/swresample.h>
-}
 
 namespace core {
 
-AudioEncoder::AudioEncoder(const QString &output_path, int sample_rate,
-                           int channels)
-    : path_(output_path), sample_rate_(sample_rate), channels_(channels) {}
+AudioEncoder::AudioEncoder() = default;
 
 AudioEncoder::~AudioEncoder() { close(); }
 
-void AudioEncoder::close() {
-  if (!opened_) {
-  }
-
-  if (frame_) {
-    av_frame_free(&frame_);
-    frame_ = nullptr;
-  }
-  if (packet_) {
+void AudioEncoder::cleanup() {
+  if (fifo_)
+    av_audio_fifo_free(fifo_);
+  if (swr_ctx_)
+    swr_free(&swr_ctx_);
+  if (packet_)
     av_packet_free(&packet_);
-    packet_ = nullptr;
-  }
-  if (codec_ctx_) {
+  if (frame_)
+    av_frame_free(&frame_);
+  if (codec_ctx_)
     avcodec_free_context(&codec_ctx_);
-    codec_ctx_ = nullptr;
-  }
 
   if (format_ctx_) {
-    if (opened_) {
-      av_write_trailer(format_ctx_);
-    }
-    if (!(format_ctx_->oformat->flags & AVFMT_NOFILE) && format_ctx_->pb) {
+    if (opened_ && !(format_ctx_->oformat->flags & AVFMT_NOFILE)) {
       avio_closep(&format_ctx_->pb);
     }
     avformat_free_context(format_ctx_);
-    format_ctx_ = nullptr;
   }
 
-  av_channel_layout_uninit(&ch_layout_);
-
+  format_ctx_ = nullptr;
+  codec_ctx_ = nullptr;
+  swr_ctx_ = nullptr;
+  fifo_ = nullptr;
+  stream_ = nullptr;
+  frame_ = nullptr;
+  packet_ = nullptr;
   opened_ = false;
+  pts_ = 0;
 }
 
-bool AudioEncoder::init_stream_and_codec() {
-  AVCodecID codec_id = AV_CODEC_ID_MP3; // WAV с float32
-  
-  swr_ctx_ = swr_alloc_set_opts2(
-      ch_layout_, AV_SAMPLE_FMT_S16P, sample_rate_,
-      ch_layout_, AV_SAMPLE_FMT_FLT, sample_rate_,
-      0, nullptr);
-  const AVCodec *codec = avcodec_find_encoder(codec_id);
-  if (!codec) {
-    TE_ERROR("AudioEncoder: Could not find encoder for mp3");
-    return false;
-  }
+bool AudioEncoder::open(const QString &path, int sample_rate, int channels,
+                        int bitrate) {
+  cleanup(); // Очистка на всякий случай
 
-  stream_ = avformat_new_stream(format_ctx_, codec);
-  if (!stream_) {
-    TE_ERROR("AudioEncoder: Could not create new stream");
-    return false;
-  }
+  path_ = path;
+  sample_rate_ = sample_rate;
+  channels_ = channels;
+  bitrate_ = bitrate;
 
-  codec_ctx_ = avcodec_alloc_context3(codec);
-  if (!codec_ctx_) {
-    TE_ERROR("AudioEncoder: Could not allocate codec context");
-    return false;
-  }
-
-  codec_ctx_->codec_id = codec_id;
-  codec_ctx_->codec_type = AVMEDIA_TYPE_AUDIO;
-  codec_ctx_->sample_rate = sample_rate_;
-  codec_ctx_->sample_fmt = AV_SAMPLE_FMT_FLT; // тот же float, что в AudioBuffer
-
-  av_channel_layout_default(&ch_layout_, channels_);
-  codec_ctx_->ch_layout = ch_layout_;
-
-  codec_ctx_->time_base = AVRational{1, sample_rate_};
-
-  if (format_ctx_->oformat->flags & AVFMT_GLOBALHEADER) {
-    codec_ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-  }
-
-  if (avcodec_open2(codec_ctx_, codec, nullptr) < 0) {
-    TE_ERROR("AudioEncoder: Could not open codec");
-    return false;
-  }
-
-  if (avcodec_parameters_from_context(stream_->codecpar, codec_ctx_) < 0) {
-    TE_ERROR("AudioEncoder: Could not copy codec parameters to stream");
-    return false;
-  }
-
-  stream_->time_base = codec_ctx_->time_base;
-
-  // Выделяем frame и packet
-  frame_ = av_frame_alloc();
-  packet_ = av_packet_alloc();
-  if (!frame_ || !packet_) {
-    TE_ERROR("AudioEncoder: Could not allocate frame/packet");
-    return false;
-  }
-
-  frame_->format = codec_ctx_->sample_fmt;
-  frame_->sample_rate = codec_ctx_->sample_rate;
-  av_channel_layout_copy(&frame_->ch_layout, &codec_ctx_->ch_layout);
-
-  // frame_size может быть 0 для PCM; тогда мы выберем блок сами
-  if (codec_ctx_->frame_size > 0) {
-    frame_->nb_samples = codec_ctx_->frame_size;
-  } else {
-    frame_->nb_samples = 1024;
-  }
-
-  if (av_frame_get_buffer(frame_, 0) < 0) {
-    TE_ERROR("AudioEncoder: Could not allocate frame buffer");
-    return false;
-  }
-
-  return true;
-}
-
-bool AudioEncoder::open() {
-  close(); // очистка на всякий случай
-
-  // Создаём выходной AVFormatContext для WAV
-  AVFormatContext *fmt = nullptr;
-  if (avformat_alloc_output_context2(&fmt, nullptr, nullptr,
+  // 1. Создаём выходной AVFormatContext (угадываем формат по расширению .mp3)
+  if (avformat_alloc_output_context2(&format_ctx_, nullptr, nullptr,
                                      path_.toUtf8().constData()) < 0 ||
-      !fmt) {
+      !format_ctx_) {
     TE_ERROR("AudioEncoder: Could not allocate output context");
     return false;
   }
 
-  format_ctx_ = fmt;
-
+  // 2. Инициализация кодека и стрима
   if (!init_stream_and_codec()) {
     TE_ERROR("AudioEncoder: init_stream_and_codec failed");
-    close();
+    cleanup();
     return false;
   }
 
+  // 3. Открытие файла (если формат требует)
   if (!(format_ctx_->oformat->flags & AVFMT_NOFILE)) {
     if (avio_open(&format_ctx_->pb, path_.toUtf8().constData(),
                   AVIO_FLAG_WRITE) < 0) {
       TE_ERROR("AudioEncoder: Could not open output file");
-      close();
+      cleanup();
       return false;
     }
   }
 
+  // 4. Запись заголовка
   if (avformat_write_header(format_ctx_, nullptr) < 0) {
     TE_ERROR("AudioEncoder: Could not write header");
-    close();
+    cleanup();
     return false;
   }
 
@@ -168,9 +82,73 @@ bool AudioEncoder::open() {
   return true;
 }
 
+bool AudioEncoder::init_stream_and_codec() {
+  // Находим MP3 кодек
+  const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_MP3);
+  if (!codec) {
+    TE_ERROR("AudioEncoder: MP3 codec not found");
+    return false;
+  }
+
+  stream_ = avformat_new_stream(format_ctx_, nullptr);
+  if (!stream_)
+    return false;
+
+  codec_ctx_ = avcodec_alloc_context3(codec);
+  if (!codec_ctx_)
+    return false;
+
+  // Параметры MP3
+  codec_ctx_->bit_rate = bitrate_;
+  codec_ctx_->sample_fmt = AV_SAMPLE_FMT_S16P; // Стандарт для LAME MP3 (Planar)
+  codec_ctx_->sample_rate = sample_rate_;
+  av_channel_layout_default(&codec_ctx_->ch_layout, channels_);
+
+  // Открываем кодек
+  if (avcodec_open2(codec_ctx_, codec, nullptr) < 0) {
+    TE_ERROR("AudioEncoder: Could not open codec");
+    return false;
+  }
+
+  avcodec_parameters_from_context(stream_->codecpar, codec_ctx_);
+
+  // --- Инициализация SwrContext (Resampler) ---
+  // Вход: Float Interleaved (из вашего AudioBuffer)
+  // Выход: S16 Planar (для MP3)
+  AVChannelLayout in_layout;
+  av_channel_layout_default(&in_layout, channels_);
+
+  int ret = swr_alloc_set_opts2(&swr_ctx_, &codec_ctx_->ch_layout,
+                                codec_ctx_->sample_fmt, codec_ctx_->sample_rate,
+                                &in_layout, AV_SAMPLE_FMT_FLT, sample_rate_, 0,
+                                nullptr);
+  av_channel_layout_uninit(&in_layout);
+
+  if (ret < 0 || swr_init(swr_ctx_) < 0) {
+    TE_ERROR("AudioEncoder: Could not init SwrContext");
+    return false;
+  }
+
+  // --- Инициализация FIFO ---
+  fifo_ = av_audio_fifo_alloc(codec_ctx_->sample_fmt, channels_, 1);
+  if (!fifo_)
+    return false;
+
+  // Аллокация вспомогательных структур
+  packet_ = av_packet_alloc();
+  frame_ = av_frame_alloc();
+  frame_->nb_samples = codec_ctx_->frame_size;
+  frame_->format = codec_ctx_->sample_fmt;
+  av_channel_layout_copy(&frame_->ch_layout, &codec_ctx_->ch_layout);
+
+  if (av_frame_get_buffer(frame_, 0) < 0)
+    return false;
+
+  return true;
+}
+
 bool AudioEncoder::encode_from_buffer(const AudioBuffer &buffer) {
-  if (!opened_ || !format_ctx_ || !codec_ctx_ || !stream_ || !frame_ ||
-      !packet_) {
+  if (!opened_ || !swr_ctx_ || !fifo_) {
     TE_ERROR("AudioEncoder: encoder is not initialized");
     return false;
   }
@@ -180,88 +158,157 @@ bool AudioEncoder::encode_from_buffer(const AudioBuffer &buffer) {
     return false;
   }
 
-  const int channels = channels_;
-  const int64_t total_samples =
-      static_cast<int64_t>(buffer.samples.size()) / channels;
+  const int nb_samples = static_cast<int>(buffer.samples.size()) / channels_;
+  if (nb_samples == 0)
+    return true;
 
-  int64_t pos = 0;
-  int64_t pts = 0;
+  // 1. Ресемплинг во временный буфер (Float -> S16P)
+  uint8_t **converted_data = nullptr;
+  int linesize;
+  if (av_samples_alloc_array_and_samples(&converted_data, &linesize, channels_,
+                                         nb_samples, codec_ctx_->sample_fmt,
+                                         0) < 0) {
+    TE_ERROR("AudioEncoder: could not alloc temp samples");
+    return false;
+  }
 
-  while (pos < total_samples) {
-    // Сколько сэмплов хотим в этом кадре
-    const int frame_nb_samples = frame_->nb_samples;
-    int64_t remaining = total_samples - pos;
-    int nb = static_cast<int>(remaining < frame_nb_samples ? remaining
-                                                           : frame_nb_samples);
+  const uint8_t *input_data[1] = {
+      reinterpret_cast<const uint8_t *>(buffer.samples.data())};
 
-    // Обнуляем frame и подготавливаем данные
-    if (av_frame_make_writable(frame_) < 0) {
-      TE_ERROR("AudioEncoder: frame not writable");
+  int ret =
+      swr_convert(swr_ctx_, converted_data, nb_samples, input_data, nb_samples);
+  if (ret < 0) {
+    TE_ERROR("AudioEncoder: swr_convert failed");
+    if (converted_data)
+      av_freep(&converted_data[0]);
+    free(converted_data);
+    return false;
+  }
+
+  // 2. Запись в FIFO
+  if (av_audio_fifo_write(fifo_, (void **)converted_data, nb_samples) <
+      nb_samples) {
+    TE_ERROR("AudioEncoder: fifo write failed");
+    if (converted_data)
+      av_freep(&converted_data[0]);
+    free(converted_data);
+    return false;
+  }
+
+  if (converted_data) {
+    av_freep(&converted_data[0]);
+    free(converted_data);
+  }
+
+  // 3. Вычитывание полных кадров из FIFO и кодирование
+  while (av_audio_fifo_size(fifo_) >= codec_ctx_->frame_size) {
+    if (av_frame_make_writable(frame_) < 0)
+      return false;
+
+    // Читаем ровно frame_size (1152) сэмплов
+    if (av_audio_fifo_read(fifo_, (void **)frame_->data,
+                           codec_ctx_->frame_size) < codec_ctx_->frame_size) {
       return false;
     }
 
-    frame_->nb_samples = nb;
-    frame_->pts = pts;
-    pts += nb;
+    frame_->nb_samples = codec_ctx_->frame_size;
+    frame_->pts = pts_;
+    pts_ += frame_->nb_samples;
 
-    // Копируем из interleaved float в frame->data (для FLT interleaved это один
-    // буфер)
-    float *dst = reinterpret_cast<float *>(frame_->data[0]);
-    const float *src = buffer.samples.data() + pos * channels;
-
-    std::memcpy(dst, src, nb * channels * sizeof(float));
-
-    pos += nb;
-
-    // Отправляем кадр в энкодер
+    // Отправка в кодек
     if (avcodec_send_frame(codec_ctx_, frame_) < 0) {
       TE_ERROR("AudioEncoder: avcodec_send_frame failed");
       return false;
     }
 
-    // Считываем пакеты, пока есть
+    // Получение пакетов
     while (true) {
-      int ret = avcodec_receive_packet(codec_ctx_, packet_);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+      int ret_pkt = avcodec_receive_packet(codec_ctx_, packet_);
+      if (ret_pkt == AVERROR(EAGAIN) || ret_pkt == AVERROR_EOF)
         break;
-      }
-      if (ret < 0) {
-        TE_ERROR("AudioEncoder: avcodec_receive_packet failed");
+      if (ret_pkt < 0)
         return false;
-      }
 
       packet_->stream_index = stream_->index;
       av_packet_rescale_ts(packet_, codec_ctx_->time_base, stream_->time_base);
 
       if (av_interleaved_write_frame(format_ctx_, packet_) < 0) {
-        TE_ERROR("AudioEncoder: av_interleaved_write_frame failed");
+        TE_ERROR("AudioEncoder: write frame failed");
         return false;
       }
-
       av_packet_unref(packet_);
     }
   }
 
-  // Флаш энкодера
-  if (avcodec_send_frame(codec_ctx_, nullptr) >= 0) {
+  return true;
+}
+
+void AudioEncoder::close() {
+  if (!opened_)
+    return;
+
+  // Сначала сбрасываем остатки данных
+  flush_encoder();
+
+  // Пишем трейлер файла
+  if (format_ctx_) {
+    av_write_trailer(format_ctx_);
+  }
+
+  cleanup();
+}
+
+bool AudioEncoder::flush_encoder() {
+  if (!fifo_ || !codec_ctx_)
+    return false;
+
+  // 1. Если в FIFO остались данные, добиваем тишиной до полного кадра
+  int remaining = av_audio_fifo_size(fifo_);
+  if (remaining > 0) {
+    if (av_frame_make_writable(frame_) < 0)
+      return false;
+
+    av_audio_fifo_read(fifo_, (void **)frame_->data, remaining);
+
+    // Паддинг нулями
+    int padding = codec_ctx_->frame_size - remaining;
+    for (int ch = 0; ch < channels_; ch++) {
+      // S16P = int16_t (2 байта)
+      int16_t *ptr = reinterpret_cast<int16_t *>(frame_->data[ch]);
+      memset(ptr + remaining, 0, padding * sizeof(int16_t));
+    }
+
+    frame_->nb_samples = codec_ctx_->frame_size;
+    frame_->pts = pts_;
+    pts_ += frame_->nb_samples;
+
+    avcodec_send_frame(codec_ctx_, frame_);
+
+    // Забираем пакет
     while (true) {
       int ret = avcodec_receive_packet(codec_ctx_, packet_);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
         break;
-      }
-      if (ret < 0) {
-        TE_ERROR("AudioEncoder: flush receive_packet failed");
-        return false;
-      }
+      if (ret < 0)
+        break;
 
       packet_->stream_index = stream_->index;
       av_packet_rescale_ts(packet_, codec_ctx_->time_base, stream_->time_base);
+      av_interleaved_write_frame(format_ctx_, packet_);
+      av_packet_unref(packet_);
+    }
+  }
 
-      if (av_interleaved_write_frame(format_ctx_, packet_) < 0) {
-        TE_ERROR("AudioEncoder: av_interleaved_write_frame (flush) failed");
-        return false;
-      }
+  // 2. Финальный флаш самого кодека (передаем nullptr)
+  if (avcodec_send_frame(codec_ctx_, nullptr) >= 0) {
+    while (true) {
+      int ret = avcodec_receive_packet(codec_ctx_, packet_);
+      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+        break;
 
+      packet_->stream_index = stream_->index;
+      av_packet_rescale_ts(packet_, codec_ctx_->time_base, stream_->time_base);
+      av_interleaved_write_frame(format_ctx_, packet_);
       av_packet_unref(packet_);
     }
   }

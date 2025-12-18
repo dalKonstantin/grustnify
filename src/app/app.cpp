@@ -30,7 +30,7 @@ void App::process_audio_file() {
   const QString dir = info.absolutePath();
   const QString baseName = info.completeBaseName();
 
-  const QString outName = baseName + "_grustnified.wav";
+  const QString outName = baseName + "_grustnified.mp3";
   const QString outPath = QDir(dir).filePath(outName);
 
   TE_INFO("output file: {}", outPath.toStdString());
@@ -56,15 +56,15 @@ void App::process_audio_file() {
   TE_INFO("decoded: sample_rate={} channels={} frames={}", buffer.sample_rate,
           buffer.channels, buffer.samples.size() / buffer.channels);
 
+  const float speed_factor = 1.15f;
+  core::AudioBuffer buffer_slowed = core::change_speed(buffer, speed_factor);
+
   core::ReverbParams rp;
-  rp.mix = 0.05f;
+  rp.mix = 0.10f;
   rp.room_size = 0.5f;
   rp.damp = 0.3f;
 
-  core::AudioBuffer with_reverb = core::reverb(buffer, rp);
-
-  const float speed_factor = 1.15f;
-  core::AudioBuffer processed = core::change_speed(with_reverb, speed_factor);
+  core::AudioBuffer processed = core::reverb(buffer_slowed, rp);
 
   if (processed.samples.empty()) {
     TE_ERROR("Processed buffer is empty after reverb+slowdown");
@@ -75,9 +75,8 @@ void App::process_audio_file() {
           processed.sample_rate, processed.channels,
           processed.samples.size() / processed.channels);
 
-  core::AudioEncoder encoder(outPath, processed.sample_rate,
-                             processed.channels);
-  if (!encoder.open()) {
+  core::AudioEncoder encoder;
+  if (!encoder.open(outPath, processed.sample_rate, processed.channels)) {
     TE_ERROR("Failed to open encoder for {}", outPath.toStdString());
     return;
   }
